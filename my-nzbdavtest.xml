@@ -1,0 +1,90 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>nzbdav</Name>
+  <!--
+    Local image you built with the embedded-rclone change.
+    This must already exist on the Unraid host (e.g. `docker build -t nzbdav-test:dev .`
+    on the server, or `docker load` an exported image). Unraid will NOT pull it from a
+    registry. To use a published image instead, change Repository to e.g.
+    ghcr.io/samtheruby/nzbdav:feature-embedded-rclone and remove the local-only note.
+  -->
+  <Repository>nzbdav-test:dev</Repository>
+  <Registry>https://hub.docker.com/r/nzbdav/nzbdav</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/nzbdav-dev/nzbdav/issues</Support>
+  <Project>https://github.com/nzbdav-dev/nzbdav</Project>
+  <Overview>
+    NzbDav is a WebDAV server that mounts and browses NZB documents as a virtual file
+    system without downloading them. It exposes a SABnzbd-compatible API for Sonarr/Radarr,
+    enabling an "infinite" Plex/Jellyfin library that streams directly from your usenet
+    provider.
+
+    This template enables the EMBEDDED RCLONE MOUNT (single-container mode): rclone runs
+    inside the NzbDav container, so you do NOT need a separate rclone sidecar. The mount
+    appears inside the container at /data/nzbdav and (via rshared propagation on /data)
+    on the host at /mnt/user/media/nzbdav by default.
+
+    REQUIREMENTS for the embedded FUSE mount (already configured in this template):
+      * --cap-add SYS_ADMIN, --device /dev/fuse, --security-opt apparmor:unconfined
+        (set via Extra Parameters below)
+      * The /data path is bound rshared so other containers (Plex, Radarr, Sonarr)
+        can see the FUSE mount and your library symlinks resolve.
+        NOTE: Unraid's UI may label this path simply "Read/Write" because the GUI does
+        not yet expose a "Shared" propagation label, but the docker run command does
+        apply rshared. Do not change the access mode of this path.
+
+    SETUP:
+      1. Set WEBDAV Password below. In embedded-mount mode this env var is the SINGLE
+         source for the WebDAV password (the UI password field is disabled), used both
+         for the WebDAV server's own auth and for the embedded mount.
+      2. Leave Enable Embedded Rclone Mount = true to start the mount on first boot.
+         You can later tune cache mode / size / read-ahead etc. under
+         Settings &gt; Rclone Server in the web UI.
+      3. The mount target defaults to /data/nzbdav (inside the container) which maps
+         to /mnt/user/media/nzbdav on the host. The container runs as PUID:PGID, so
+         that user must be able to create/write it. Pre-create and chown once from a
+         terminal:
+            mkdir -p /mnt/user/media/nzbdav &amp;&amp; chown 1000:1000 /mnt/user/media/nzbdav
+         (entrypoint.sh will also chown the in-container mount directory on startup
+         unless it is already a mountpoint.)
+      4. After it starts, open the WebUI at http://[server]:8085/ and finish Usenet
+         provider setup under Settings.
+
+    See the comprehensive setup guide:
+    https://github.com/nzbdav-dev/nzbdav/blob/main/docs/setup-guide.md
+  </Overview>
+  <Category>MediaApp:Video Downloaders:Other Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8085]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/nzbdav-dev/nzbdav/main/frontend/public/logo.svg</Icon>
+  <ExtraParams>--cap-add SYS_ADMIN --device /dev/fuse --security-opt apparmor:unconfined</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+
+  <Config Name="WebUI Port" Target="3000" Default="8085" Mode="tcp" Description="Host port that maps to the container's web interface / WebDAV / SABnzbd-compatible API (container port 3000). Default host port is 8085." Type="Port" Display="always" Required="true" Mask="false">8085</Config>
+
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/nzbdav/" Mode="rw" Description="Persistent config and the SQLite database (settings, queue, history)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nzbdav/</Config>
+
+  <Config Name="Media (rshared)" Target="/data" Default="/mnt/user/media" Mode="rshared" Description="Host media share bound into the container at /data with rshared bind propagation. REQUIRED for the embedded rclone mount: the FUSE mount is created at /data/nzbdav and shared back to the host (and other containers like Plex/Radarr/Sonarr) so library symlinks resolve. NOTE: Unraid's GUI label this as 'Read/Write' because no 'Shared' label exists in the dropdown, but the docker run command DOES apply :rshared propagation. Do not change the access mode." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media</Config>
+
+  <Config Name="WEBDAV Password" Target="WEBDAV_PASSWORD" Default="" Mode="" Description="Single source for the WebDAV password in embedded-mount mode. Used for the WebDAV server's own auth AND for the embedded rclone mount (obscured and passed to rclone via the environment, never written to disk). The UI password field is disabled while the embedded mount is enabled." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+
+  <Config Name="Enable Embedded Rclone Mount" Target="RCLONE_MOUNT" Default="true" Mode="" Description="Set to true to run rclone inside this container and mount the WebDAV on first boot (single-container mode, no sidecar). You can also toggle this later under Settings &gt; Rclone Server; once toggled in the UI, the UI value takes over." Type="Variable" Display="always" Required="true" Mask="false">true</Config>
+
+  <Config Name="Rclone Mount Directory" Target="MOUNT_DIR" Default="/data/nzbdav" Mode="" Description="Filesystem path the embedded mount is created at (inside the container). With /data bound rshared from /mnt/user/media, the default /data/nzbdav appears on the host at /mnt/user/media/nzbdav. Can also be set later under Settings &gt; SABnzbd / Rclone Server. If you change this, ensure the new path is inside /data (or another rshared bind) and that PUID:PGID can create/write it." Type="Variable" Display="always" Required="false" Mask="false">/data/nzbdav</Config>
+
+  <Config Name="PUID" Target="PUID" Default="1000" Mode="" Description="User ID the app and the rclone mount run as. Default 1000. The mount directory's parent must allow this user to create/write it." Type="Variable" Display="always" Required="true" Mask="false">1000</Config>
+
+  <Config Name="PGID" Target="PGID" Default="1000" Mode="" Description="Group ID the app and the rclone mount run as. Default 1000." Type="Variable" Display="always" Required="true" Mask="false">1000</Config>
+
+  <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Container time zone, e.g. America/New_York or Europe/London." Type="Variable" Display="advanced" Required="false" Mask="false">America/New_York</Config>
+
+  <Config Name="Log Level" Target="LOG_LEVEL" Default="warning" Mode="" Description="Backend log verbosity: error, warning, info, or debug." Type="Variable" Display="advanced" Required="false" Mask="false">warning</Config>
+</Container>

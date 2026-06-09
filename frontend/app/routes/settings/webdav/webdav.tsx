@@ -10,6 +10,7 @@ type SabnzbdSettingsProps = {
 };
 
 export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
+    const embeddedMountEnabled = config["rclone.embedded-mount-enabled"] === "true";
     return (
         <div className={styles.container}>
             <Form.Group>
@@ -34,10 +35,14 @@ export function WebdavSettings({ config, setNewConfig }: SabnzbdSettingsProps) {
                     type="password"
                     id="webdav-pass-input"
                     aria-describedby="webdav-pass-help"
-                    value={config["webdav.pass"]}
+                    disabled={embeddedMountEnabled}
+                    placeholder={embeddedMountEnabled ? "Set via WEBDAV_PASSWORD env var" : undefined}
+                    value={embeddedMountEnabled ? "" : config["webdav.pass"]}
                     onChange={e => setNewConfig({ ...config, "webdav.pass": e.target.value })} />
                 <Form.Text id="webdav-pass-help" muted>
-                    Use this password to connect to the webdav.
+                    {embeddedMountEnabled
+                        ? "Managed via the WEBDAV_PASSWORD environment variable while the embedded rclone mount is enabled, so the server and the mount always agree."
+                        : "Use this password to connect to the webdav."}
                 </Form.Text>
             </Form.Group>
             <hr />

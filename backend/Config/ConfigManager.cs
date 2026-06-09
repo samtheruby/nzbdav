@@ -61,7 +61,12 @@ public class ConfigManager
         var mountDir = StringUtil.EmptyToNull(GetConfigValue("rclone.mount-dir"))
                        ?? EnvironmentUtil.GetEnvironmentVariable("MOUNT_DIR")
                        ?? "/mnt/nzbdav";
-        if (mountDir.EndsWith('/')) mountDir = mountDir.TrimEnd('/');
+        mountDir = mountDir.TrimEnd('/');
+        // Reject relative or root paths: relative would resolve against the backend's
+        // CWD (surprising), and "/" as a mount point would mean rclone takes over the
+        // container's root. Fall back to the default rather than fail loudly — this
+        // is read from many callers, not just the mount service.
+        if (mountDir.Length < 2 || mountDir[0] != '/') return "/mnt/nzbdav";
         return mountDir;
     }
 
@@ -103,13 +108,26 @@ public class ConfigManager
                ?? "admin";
     }
 
+    // PasswordHasher salts every call, so re-hashing on each WebDAV request would
+    // also bypass PasswordUtil.Verify's cache (its key includes the hash). The env
+    // var is process-static, so hash once and reuse.
+    private static readonly Lazy<string?> EnvPasswordHash = new(() =>
+    {
+        var pass = EnvironmentUtil.GetEnvironmentVariable("WEBDAV_PASSWORD");
+        return pass != null ? PasswordUtil.Hash(pass) : null;
+    });
+
     public string? GetWebdavPasswordHash()
     {
+        // In embedded-mount mode, the WEBDAV_PASSWORD env var is the source of truth
+        // for the WebDAV password (the UI field is disabled). Prefer it, but fall
+        // through to the stored hash if it isn't set so existing users aren't locked
+        // out the instant they flip the toggle without setting the env var.
+        if (IsRcloneEmbeddedMountEnabled() && EnvPasswordHash.Value is { } embeddedHash)
+            return embeddedHash;
+
         var hashedPass = StringUtil.EmptyToNull(GetConfigValue("webdav.pass"));
-        if (hashedPass != null) return hashedPass;
-        var pass = EnvironmentUtil.GetEnvironmentVariable("WEBDAV_PASSWORD");
-        if (pass != null) return PasswordUtil.Hash(pass);
-        return null;
+        return hashedPass ?? EnvPasswordHash.Value;
     }
 
     public bool IsEnsureImportableVideoEnabled()
@@ -259,6 +277,55 @@ public class ConfigManager
     public string? GetRclonePass()
     {
         return GetConfigValue("rclone.pass");
+    }
+
+    public bool IsRcloneEmbeddedMountEnabled()
+    {
+        // The WebUI toggle is the source of truth once set; the RCLONE_MOUNT env
+        // var is a first-boot default for single-container deployments.
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("rclone.embedded-mount-enabled"));
+        if (configValue != null) return bool.Parse(configValue);
+        return EnvironmentUtil.IsVariableTrue("RCLONE_MOUNT");
+    }
+
+    public string GetRcloneVfsCacheMode()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("rclone.vfs-cache-mode")) ?? "full";
+    }
+
+    public string GetRcloneVfsCacheMaxSize()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("rclone.vfs-cache-max-size")) ?? "20G";
+    }
+
+    public string GetRcloneVfsCacheMaxAge()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("rclone.vfs-cache-max-age")) ?? "24h";
+    }
+
+    public string GetRcloneBufferSize()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("rclone.buffer-size")) ?? "0M";
+    }
+
+    public string GetRcloneVfsReadAhead()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("rclone.vfs-read-ahead")) ?? "512M";
+    }
+
+    public string GetRcloneDirCacheTime()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("rclone.dir-cache-time")) ?? "20s";
+    }
+
+    public string GetRcloneLogLevel()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("rclone.log-level")) ?? "NOTICE";
+    }
+
+    public string? GetRcloneExtraFlags()
+    {
+        return StringUtil.EmptyToNull(GetConfigValue("rclone.extra-flags"));
     }
 
     public string GetUserAgent()

@@ -29,6 +29,12 @@ public class RcloneClient
     private static string? Pass { get; set; }
     public static bool IsRemoteControlEnabled { get; private set; } = false;
 
+    // When the embedded rclone mount is running, it owns the RC connection
+    // (loopback, no auth) and the user's rclone.host/user/pass config is ignored.
+    // volatile: written from the mount supervisor, read from the config-change
+    // handler that fires on the request thread.
+    private static volatile bool _embeddedRcActive = false;
+
     public static void Initialize(ConfigManager configManager)
     {
         Host = configManager.GetRcloneHost();
@@ -38,6 +44,8 @@ public class RcloneClient
 
         configManager.OnConfigChanged += (_, configEventArgs) =>
         {
+            // don't let user config clobber the embedded mount's RC connection.
+            if (_embeddedRcActive) return;
             var changedConfig = configEventArgs.ChangedConfig;
             if (changedConfig.TryGetValue("rclone.host", out var host)) Host = host;
             if (changedConfig.TryGetValue("rclone.user", out var user)) User = user;
@@ -45,6 +53,31 @@ public class RcloneClient
             if (changedConfig.ContainsKey("rclone.rc-enabled"))
                 IsRemoteControlEnabled = configManager.IsRcloneRemoteControlEnabled();
         };
+    }
+
+    /// <summary>
+    /// Point the RC client at the embedded mount's loopback RC server. Called by
+    /// RcloneMountService when it starts the embedded mount.
+    /// </summary>
+    public static void UseEmbeddedRemoteControl(string host)
+    {
+        _embeddedRcActive = true;
+        Host = host;
+        User = null;
+        Pass = null;
+        IsRemoteControlEnabled = true;
+    }
+
+    /// <summary>
+    /// Restore the user-configured RC connection. Called when the embedded mount stops.
+    /// </summary>
+    public static void RestoreConfiguredRemoteControl(ConfigManager configManager)
+    {
+        _embeddedRcActive = false;
+        Host = configManager.GetRcloneHost();
+        User = configManager.GetRcloneUser();
+        Pass = configManager.GetRclonePass();
+        IsRemoteControlEnabled = configManager.IsRcloneRemoteControlEnabled();
     }
 
     /// <summary>

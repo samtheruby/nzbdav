@@ -90,6 +90,19 @@ if [ -f "$CONFIG_PATH/db.sqlite" ]; then
     fi
 fi
 
+# Update ownership of the rclone mount directory so the backend can mount/write there.
+# Matches the resolution in ConfigManager.GetRcloneMountDir(): MOUNT_DIR env var, else default.
+# Top-level only — once rclone mounts, contents are owned by the FUSE layer, not the host fs.
+RCLONE_MOUNT_DIR=${MOUNT_DIR:-/mnt/nzbdav}
+if ! mkdir -p "$RCLONE_MOUNT_DIR" 2>/dev/null; then
+    echo "Warning: could not create rclone mount directory $RCLONE_MOUNT_DIR (skipping chown)"
+elif grep -q " $RCLONE_MOUNT_DIR " /proc/mounts 2>/dev/null; then
+    echo "$RCLONE_MOUNT_DIR is already a mountpoint; skipping chown"
+else
+    chown "$PUID:$PGID" "$RCLONE_MOUNT_DIR" || \
+        echo "Warning: could not chown $RCLONE_MOUNT_DIR to $PUID:$PGID"
+fi
+
 # Run backend database migration
 cd /app/backend
 echo "Running database maintenance."

@@ -61,6 +61,7 @@ You'll also want to set up a username and password for logging in to the webdav 
 
 If you'd like to get the most out of NzbDav, check out the [comprehensive guide](docs/setup-guide.md) for detailed instructions covering:
 * **Docker Compose:** Full stack with Rclone sidecar and healthchecks.
+* **Single-Container / Embedded Rclone:** Run rclone inside the NzbDav container for `docker run`-only platforms (Unraid, Portainer, TrueNAS).
 * **Performance Tuning:** Benchmarking WebDAV connection limits.
 * **Integrations:** Automating Radarr/Sonarr queue management and repairs.
 * **Stremio:** Streaming Usenet directly via AIOStreams.

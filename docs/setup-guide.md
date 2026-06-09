@@ -139,6 +139,8 @@ You can find the optimal **Max Download Connections** for your network (`Setting
 
 Now we mount the NzbDav web dav to the host file system using a sidecar container.
 
+> **Running on a single-container platform** (Unraid, Portainer single-container, TrueNAS apps) where `docker compose` sidecars are awkward? You can run rclone *inside* the NzbDav container instead — skip to [Alternative: Embedded Rclone Mount](#alternative-embedded-rclone-mount-single-container).
+
 ### 1. Prepare Host Directory
 
 ```bash
@@ -252,6 +254,94 @@ Remember: `unnecessary flags = potential pitfalls`.
 
 #### Rclone flags reference
 * [Rclone Forum Discussion on Buffer Size](https://forum.rclone.org/t/whats-the-suitable-value-to-set-for-buffer-size-with-vfs-read-ahead/39971/4)
+
+---
+
+## Alternative: Embedded Rclone Mount (Single Container)
+
+Instead of the sidecar above, NzbDav can run rclone itself, in the same container. This
+is aimed at platforms that only support a single `docker run` (Unraid Community Apps,
+Portainer single-container, TrueNAS apps), where wiring up a separate rclone service is
+painful. The rclone binary ships inside the NzbDav image.
+
+> **This does not remove the privileged-container requirements.** A FUSE mount still needs
+> `--cap-add SYS_ADMIN`, `--device /dev/fuse`, `--security-opt apparmor:unconfined`, and —
+> for other containers (Plex/Radarr) to see the mount — a shared bind mount such as
+> `/mnt:/mnt:rshared`. What you save is the second container, the manual `rclone.conf`, the
+> `rclone obscure` step, and the `depends_on` ordering.
+
+### 1. How the mount authenticates
+
+In embedded mode, the **`WEBDAV_PASSWORD`** environment variable is the **single source** for
+the WebDAV password. NzbDav uses it both for the WebDAV server's own authentication and for the
+embedded mount (obscured and handed to rclone via the environment — never written to disk or
+shown on the command line). To avoid a second, conflicting source, the WebDAV password field in
+the UI is **disabled** while the embedded mount is enabled. Set the password here, on the
+`docker run` line, instead.
+
+### 2. Run it
+
+```bash
+mkdir -p $(pwd)/nzbdav
+docker run -d \
+  --name nzbdav \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -e TZ=America/New_York \
+  -e WEBDAV_PASSWORD=your-webdav-password \
+  -e RCLONE_MOUNT=true \
+  --cap-add SYS_ADMIN \
+  --device /dev/fuse \
+  --security-opt apparmor:unconfined \
+  -p 3000:3000 \
+  -v $(pwd)/nzbdav:/config \
+  -v /mnt:/mnt:rshared \
+  nzbdav/nzbdav:latest
+```
+
+* `RCLONE_MOUNT=true` turns the embedded mount on from first boot. You can also toggle it
+  later under `Settings` > `Rclone Server` > **Enable Embedded Rclone Mount** (the UI toggle
+  takes over once set).
+* The mount target defaults to `/mnt/nzbdav`; change it under `Settings` > `SABnzbd` >
+  **Rclone Mount Directory** (or the same field in the Rclone tab).
+* **Permissions:** the container runs as `PUID:PGID`, so that user must be able to create and
+  write the mount directory. If the parent (e.g. host `/mnt`) is owned by root, pre-create and
+  chown it first, otherwise the mount fails (the status badge will report it):
+  ```bash
+  sudo mkdir -p /mnt/nzbdav && sudo chown 1000:1000 /mnt/nzbdav
+  ```
+
+### 3. Configure the mount options
+
+Open `Settings` > `Rclone Server`. With the embedded mount enabled you can tune the same
+streaming options as the sidecar — cache mode, cache size/age, buffer size, read-ahead,
+dir-cache-time, log level, plus an **Additional Flags** box for anything else. The required
+flags (`--links`, `--use-cookies`, `--allow-other`) are always applied for you, and the
+rclone RC cache-refresh integration is wired automatically (no host/user/pass to fill in).
+
+Changes apply live — saving the settings restarts the embedded mount with the new flags; no
+container restart needed.
+
+### 4. Migrating an existing library from a sidecar
+
+If you're switching an **existing** setup from the external rclone sidecar to the embedded
+mount, and the embedded mount uses a **different** path than the sidecar did, your library's
+symlinks still point at the old path and will break. (If you instead set the embedded mount
+directory to the *same* path the sidecar used, everything keeps working and you can skip this.)
+
+NzbDav can repoint them for you. **Do this in order:**
+
+1. Enable the embedded mount (new path, e.g. `/mnt/nzbdav`) and confirm the status badge under
+   `Settings` > `Rclone Server` shows **Mounted**. Leave the old sidecar running for now.
+2. **Back up your library directory.**
+3. Go to `Settings` > `Maintenance` > **Migrate Library to Embedded Mount**, enter the old
+   sidecar path (e.g. `/mnt/remote/nzbdav`), and run it. It rewrites every library symlink that
+   pointed under the old path to the same content under the new mount, showing live progress.
+4. Verify a few titles play from your library.
+5. Remove the old rclone sidecar — nothing references it anymore.
+
+This only applies to **symlink**-strategy libraries; `.strm` users are unaffected (their links
+don't embed the mount path). The task is safe to re-run and is a no-op on a fresh install.
 
 ---
 

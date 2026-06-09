@@ -22,7 +22,28 @@ ARG TARGETARCH
 RUN dotnet restore
 RUN dotnet publish -c Release -r linux-musl-${TARGETARCH} -o ./publish
 
-# -------- Stage 3: Combined runtime image --------
+# -------- Stage 3: Fetch rclone binary --------
+# Downloaded on the build platform (no emulation) and selected by target arch.
+# Pinned for reproducibility; bump RCLONE_VER to update.
+# NOTE: the arg is intentionally named RCLONE_VER, not RCLONE_VERSION. Docker
+# exposes build args as env vars to RUN, and rclone reads RCLONE_<FLAG> env
+# vars as flags, so RCLONE_VERSION would be parsed as the boolean --version
+# flag and crash `rclone version`.
+# NOTE: --links (used by the embedded mount in entrypoint/RcloneMountService)
+# requires rclone >= 1.70.3.
+FROM --platform=$BUILDPLATFORM alpine:3.21 AS rclone-build
+
+ARG TARGETARCH
+ARG RCLONE_VER=1.74.3
+
+RUN apk add --no-cache curl unzip \
+    && curl -fsSL "https://downloads.rclone.org/v${RCLONE_VER}/rclone-v${RCLONE_VER}-linux-${TARGETARCH}.zip" -o /tmp/rclone.zip \
+    && unzip -q /tmp/rclone.zip -d /tmp \
+    && mv "/tmp/rclone-v${RCLONE_VER}-linux-${TARGETARCH}/rclone" /usr/local/bin/rclone \
+    && chmod 0755 /usr/local/bin/rclone \
+    && /usr/local/bin/rclone version
+
+# -------- Stage 4: Combined runtime image --------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
 
 # Label the image
@@ -32,7 +53,13 @@ LABEL org.opencontainers.image.source=${REPO_URL}
 # Prepare environment
 WORKDIR /app
 RUN mkdir /config \
-    && apk add --no-cache nodejs npm libc6-compat shadow su-exec bash curl tzdata
+    && apk add --no-cache nodejs npm libc6-compat shadow su-exec bash curl tzdata fuse3
+
+# Bundle rclone for the optional embedded mount (see entrypoint.sh / RCLONE_MOUNT).
+# user_allow_other lets the mount be shared with other containers via --allow-other.
+COPY --from=rclone-build /usr/local/bin/rclone /usr/local/bin/rclone
+RUN touch /etc/fuse.conf \
+    && grep -qxF user_allow_other /etc/fuse.conf || echo user_allow_other >> /etc/fuse.conf
 
 # Copy frontend
 COPY --from=frontend-build /frontend/node_modules ./frontend/node_modules

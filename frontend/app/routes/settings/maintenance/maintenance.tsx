@@ -2,6 +2,7 @@ import { Accordion, Form, InputGroup } from "react-bootstrap";
 import styles from "./maintenance.module.css"
 import { RemoveUnlinkedFiles } from "./remove-unlinked-files/remove-unlinked-files";
 import { ConvertStrmToSymlinks } from "./strm-to-symlinks/strm-to-symlinks";
+import { RepointSymlinks } from "./repoint-symlinks/repoint-symlinks";
 import { MigrateDatabaseFilesToBlobstore } from "./migrate-database-files-to-blobstore/migrate-database-files-to-blobstore";
 import type { Dispatch, SetStateAction } from "react";
 
@@ -108,6 +109,14 @@ export function Maintenance({ savedConfig, config, setNewConfig }: MaintenancePr
                         </Accordion.Header>
                         <Accordion.Body className={styles.accordionBody}>
                             <ConvertStrmToSymlinks savedConfig={savedConfig} />
+                        </Accordion.Body>
+                    </Accordion.Item>
+                    <Accordion.Item className={styles.accordionItem} eventKey="repoint-symlinks">
+                        <Accordion.Header className={styles.accordionHeader}>
+                            Migrate Library to Embedded Mount
+                        </Accordion.Header>
+                        <Accordion.Body className={styles.accordionBody}>
+                            <RepointSymlinks savedConfig={savedConfig} />
                         </Accordion.Body>
                     </Accordion.Item>
                     <Accordion.Item className={styles.accordionItem} eventKey="migrate-database-files-to-blobstore">
