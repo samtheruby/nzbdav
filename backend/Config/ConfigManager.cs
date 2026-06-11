@@ -213,6 +213,17 @@ public class ConfigManager
                && GetArrConfig().GetInstanceCount() > 0;
     }
 
+    public int GetHealthCheckMaxFailures()
+    {
+        // after this many consecutive transient (non-NotFound) failures, an item is
+        // marked failed and stops being retried instead of looping forever.
+        var defaultValue = 5;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("repair.healthcheck.max-failures"));
+        if (configValue == null || !int.TryParse(configValue, out var maxFailures) || maxFailures < 1)
+            return defaultValue;
+        return maxFailures;
+    }
+
     public ArrConfig GetArrConfig()
     {
         var defaultValue = new ArrConfig();

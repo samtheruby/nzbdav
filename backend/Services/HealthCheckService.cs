@@ -58,13 +58,17 @@ public class HealthCheckService : BackgroundService
 
                 // get concurrency
                 var concurrency = _configManager.GetUsenetProviderConfig().TotalPooledConnections;
+                var maxFailures = _configManager.GetHealthCheckMaxFailures();
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
-                // get the davItem to health-check
+                // get the davItem to health-check.
+                // items that have failed too many times are skipped — they're marked
+                // failed and no longer retried, so one broken item can't loop forever.
                 await using var dbContext = new DavDatabaseContext();
                 var dbClient = new DavDatabaseClient(dbContext);
                 var currentDateTime = DateTimeOffset.UtcNow;
                 var davItem = await GetHealthCheckQueueItems(dbClient)
+                    .Where(x => x.HealthCheckFailureCount < maxFailures)
                     .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
                     .FirstOrDefaultAsync(cts.Token).ConfigureAwait(false);
 
@@ -76,7 +80,7 @@ public class HealthCheckService : BackgroundService
                 }
 
                 // perform the health check
-                await PerformHealthCheck(davItem, dbClient, concurrency, cts.Token).ConfigureAwait(false);
+                await PerformHealthCheck(davItem, dbClient, concurrency, maxFailures, cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
             {
@@ -111,6 +115,7 @@ public class HealthCheckService : BackgroundService
         DavItem davItem,
         DavDatabaseClient dbClient,
         int concurrency,
+        int maxFailures,
         CancellationToken ct
     )
     {
@@ -140,6 +145,7 @@ public class HealthCheckService : BackgroundService
             var now = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = now;
             davItem.NextHealthCheck = HealthCheckScheduler.ComputeHealthyNextCheck(davItem.ReleaseDate, now);
+            davItem.HealthCheckFailureCount = 0;
             dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
             {
                 Id = Guid.NewGuid(),
@@ -173,9 +179,12 @@ public class HealthCheckService : BackgroundService
             // transient failure (timeout, streaming contention, circuit-breaker trip).
             // Do NOT condemn the file. Advance NextHealthCheck by a short retry interval
             // and move on, so one flaky item can't re-select forever and stall the queue.
+            // After too many consecutive failures, mark it failed and stop retrying.
             var now = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = now;
             davItem.NextHealthCheck = HealthCheckScheduler.ComputeRetryNextCheck(now);
+            davItem.HealthCheckFailureCount++;
+            var terminal = HealthCheckScheduler.IsTerminalFailure(davItem.HealthCheckFailureCount, maxFailures);
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
             dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
             {
@@ -185,7 +194,9 @@ public class HealthCheckService : BackgroundService
                 CreatedAt = now,
                 Result = HealthCheckResult.HealthResult.Unhealthy,
                 RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
-                Message = $"Transient error during health check, will retry: {e.Message}"
+                Message = terminal
+                    ? $"Health check failed {davItem.HealthCheckFailureCount} times, marked failed and no longer retried: {e.Message}"
+                    : $"Transient error during health check, will retry: {e.Message}"
             }));
             await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         }
