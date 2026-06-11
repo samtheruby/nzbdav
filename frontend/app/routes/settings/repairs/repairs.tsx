@@ -1,9 +1,11 @@
-import { Alert, Form } from "react-bootstrap";
+import { Alert, Form, InputGroup } from "react-bootstrap";
 import styles from "./repairs.module.css"
 import { type Dispatch, type SetStateAction } from "react";
 import { className } from "~/utils/styling";
 
 const backoffTiersKey = "repair.healthcheck.backoff-tiers";
+const scheduleEnabledKey = "repair.healthcheck.schedule-enabled";
+const scheduleTimeKey = "repair.healthcheck.schedule-time";
 
 type BackoffTier = { MaxAgeDays: number | null, IntervalDays: number };
 
@@ -88,8 +90,89 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     Older releases are checked less often to save connections.
                 </Form.Text>
             </Form.Group>
+            <hr />
+            <Form.Group>
+                <Form.Check
+                    className={styles.input}
+                    type="checkbox"
+                    id="healthcheck-schedule-enabled-checkbox"
+                    aria-describedby="healthcheck-schedule-help"
+                    label="Schedule Health Checks Daily"
+                    checked={isScheduleEnabled(config)}
+                    onChange={e => setNewConfig({ ...config, [scheduleEnabledKey]: "" + e.target.checked })} />
+                <InputGroup className={styles.input} style={{ marginTop: '15px' }}>
+                    <Form.Select
+                        disabled={!isScheduleEnabled(config)}
+                        value={getScheduledTime(config).hour}
+                        onChange={e => setNewConfig({
+                            ...config,
+                            [scheduleTimeKey]: buildScheduledTime(
+                                parseInt(e.target.value),
+                                getScheduledTime(config).minute,
+                                getScheduledTime(config).period
+                            )
+                        })}>
+                        {Array.from({ length: 12 }, (_, i) => i + 1).map(h => (
+                            <option key={h} value={h}>{h}</option>
+                        ))}
+                    </Form.Select>
+                    <Form.Select
+                        disabled={!isScheduleEnabled(config)}
+                        value={getScheduledTime(config).minute}
+                        onChange={e => setNewConfig({
+                            ...config,
+                            [scheduleTimeKey]: buildScheduledTime(
+                                getScheduledTime(config).hour,
+                                parseInt(e.target.value),
+                                getScheduledTime(config).period
+                            )
+                        })}>
+                        <option value={0}>00</option>
+                        <option value={15}>15</option>
+                        <option value={30}>30</option>
+                        <option value={45}>45</option>
+                    </Form.Select>
+                    <Form.Select
+                        disabled={!isScheduleEnabled(config)}
+                        value={getScheduledTime(config).period}
+                        onChange={e => setNewConfig({
+                            ...config,
+                            [scheduleTimeKey]: buildScheduledTime(
+                                getScheduledTime(config).hour,
+                                getScheduledTime(config).minute,
+                                e.target.value as "am" | "pm"
+                            )
+                        })}>
+                        <option value="am">am</option>
+                        <option value="pm">pm</option>
+                    </Form.Select>
+                </InputGroup>
+                <Form.Text id="healthcheck-schedule-help" muted>
+                    When enabled, health checks only run once per day starting at the specified time,
+                    instead of continuously. This is useful for confining checks to off-hours.
+                    You may need to set the TZ env variable to ensure the correct timezone.
+                </Form.Text>
+            </Form.Group>
         </div>
     );
+}
+
+function isScheduleEnabled(config: Record<string, string>) {
+    return config[scheduleEnabledKey] === "true";
+}
+
+function getScheduledTime(config: Record<string, string>): { hour: number, minute: number, period: "am" | "pm" } {
+    const totalMinutes = parseInt(config[scheduleTimeKey] || "0");
+    return {
+        hour: Math.floor(totalMinutes / 60) % 12 || 12,
+        minute: totalMinutes % 60,
+        period: Math.floor(totalMinutes / 60) >= 12 ? "pm" : "am"
+    };
+}
+
+function buildScheduledTime(hour: number, minute: number, period: "am" | "pm"): string {
+    const hour24 = (hour % 12) + (period === "pm" ? 12 : 0);
+    return "" + (hour24 * 60 + minute);
 }
 
 function getBackoffTiers(config: Record<string, string>): BackoffTier[] {
@@ -117,5 +200,7 @@ function setTierField(
 export function isRepairsSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {
     return config["repair.enable"] !== newConfig["repair.enable"]
         || config["media.library-dir"] !== newConfig["media.library-dir"]
-        || config[backoffTiersKey] !== newConfig[backoffTiersKey];
+        || config[backoffTiersKey] !== newConfig[backoffTiersKey]
+        || config[scheduleEnabledKey] !== newConfig[scheduleEnabledKey]
+        || config[scheduleTimeKey] !== newConfig[scheduleTimeKey];
 }
