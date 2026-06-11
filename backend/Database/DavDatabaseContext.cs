@@ -123,6 +123,10 @@ public sealed class DavDatabaseContext() : DbContext(Options.Value)
                     x => x.HasValue ? DateTimeOffset.FromUnixTimeSeconds(x.Value) : null
                 );
 
+            e.Property(i => i.HealthCheckFailureCount)
+                .ValueGeneratedNever()
+                .HasDefaultValue(0);
+
             e.Property(i => i.FileBlobId)
                 .ValueGeneratedNever()
                 .IsRequired(false);
