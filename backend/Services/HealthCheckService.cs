@@ -19,7 +19,8 @@ namespace NzbWebDAV.Services;
 public class HealthCheckService : BackgroundService
 {
     private readonly ConfigManager _configManager;
-    private readonly INntpClient _usenetClient;
+    private readonly INntpClient _streamingClient;
+    private readonly INntpClient _healthCheckClient;
     private readonly WebsocketManager _websocketManager;
 
     private static readonly HashSet<string> _missingSegmentIds = [];
@@ -29,12 +30,14 @@ public class HealthCheckService : BackgroundService
     public HealthCheckService
     (
         ConfigManager configManager,
-        UsenetStreamingClient usenetClient,
+        UsenetStreamingClient streamingClient,
+        UsenetHealthCheckClient healthCheckClient,
         WebsocketManager websocketManager
     )
     {
         _configManager = configManager;
-        _usenetClient = usenetClient;
+        _streamingClient = streamingClient;
+        _healthCheckClient = healthCheckClient;
         _websocketManager = websocketManager;
 
         _configManager.OnConfigChanged += (_, configEventArgs) =>
@@ -71,15 +74,17 @@ public class HealthCheckService : BackgroundService
                 using var cts = CancellationTokenSource
                     .CreateLinkedTokenSource(stoppingToken, _rescheduleCts.Token);
 
+                var execution = ResolveExecution();
+
                 if (_configManager.IsHealthCheckScheduleEnabled())
                 {
                     // scheduled: wait for the daily run time, then drain the due queue once.
-                    await RunScheduledDrain(cts.Token).ConfigureAwait(false);
+                    await RunScheduledDrain(execution, cts.Token).ConfigureAwait(false);
                 }
                 else
                 {
-                    // continuous: process one due item, or idle briefly if the queue is empty.
-                    if (!await TryProcessNextDueItem(cts.Token).ConfigureAwait(false))
+                    // continuous: process a batch of due items, or idle if the queue is empty.
+                    if (!await ProcessDueBatch(execution, cts.Token).ConfigureAwait(false))
                         await Task.Delay(TimeSpan.FromSeconds(5), cts.Token).ConfigureAwait(false);
                 }
             }
@@ -101,11 +106,29 @@ public class HealthCheckService : BackgroundService
     }
 
     /// <summary>
+    /// Picks the client, per-check connection count, and max concurrency for this pass.
+    /// When a dedicated health-check pool is configured, checks run in parallel against
+    /// it (HealthCheckConnectionsPerCheck connections each). Otherwise we fall back to
+    /// the shared streaming pool, one check at a time, as before.
+    /// </summary>
+    private HealthCheckExecution ResolveExecution()
+    {
+        var maxConcurrent = HealthCheckScheduler.ComputeMaxConcurrentChecks(_configManager.GetUsenetProviderConfig());
+        if (maxConcurrent >= 1)
+            return new HealthCheckExecution(_healthCheckClient, HealthCheckScheduler.HealthCheckConnectionsPerCheck, maxConcurrent);
+
+        var streamingConcurrency = _configManager.GetUsenetProviderConfig().TotalPooledConnections;
+        return new HealthCheckExecution(_streamingClient, streamingConcurrency, 1);
+    }
+
+    private readonly record struct HealthCheckExecution(INntpClient Client, int PerCheckConcurrency, int MaxConcurrentChecks);
+
+    /// <summary>
     /// Waits until the configured daily run time, then drains every currently-due
     /// item before returning. The backoff schedule still decides which items are
     /// due; this only confines when the worker is active (e.g. to off-hours).
     /// </summary>
-    private async Task RunScheduledDrain(CancellationToken ct)
+    private async Task RunScheduledDrain(HealthCheckExecution execution, CancellationToken ct)
     {
         var now = DateTime.Now;
         var nextRun = HealthCheckScheduler.ComputeNextScheduledRun(now, _configManager.HealthCheckSchedule());
@@ -114,34 +137,62 @@ public class HealthCheckService : BackgroundService
         await Task.Delay(nextRun - now, ct).ConfigureAwait(false);
 
         Log.Information("HealthCheckScheduler: draining due health checks");
-        while (await TryProcessNextDueItem(ct).ConfigureAwait(false))
+        while (await ProcessDueBatch(execution, ct).ConfigureAwait(false))
         {
             // keep going until no item is currently due
         }
     }
 
     /// <summary>
-    /// Health-checks the single most-due item, returning true if one was processed.
-    /// Items that have failed too many times are skipped — they're marked failed and
-    /// no longer retried, so one broken item can't loop forever.
+    /// Health-checks up to MaxConcurrentChecks of the most-due items in parallel,
+    /// returning true if at least one was processed. A distinct batch of item ids is
+    /// selected up front so parallel workers never pick the same item. Items that have
+    /// failed too many times are skipped — they're marked failed and no longer retried.
     /// </summary>
-    private async Task<bool> TryProcessNextDueItem(CancellationToken ct)
+    private async Task<bool> ProcessDueBatch(HealthCheckExecution execution, CancellationToken ct)
     {
-        var concurrency = _configManager.GetUsenetProviderConfig().TotalPooledConnections;
         var maxFailures = _configManager.GetHealthCheckMaxFailures();
 
+        List<Guid> dueItemIds;
+        await using (var dbContext = new DavDatabaseContext())
+        {
+            var dbClient = new DavDatabaseClient(dbContext);
+            var currentDateTime = DateTimeOffset.UtcNow;
+            dueItemIds = await GetHealthCheckQueueItems(dbClient)
+                .Where(x => x.HealthCheckFailureCount < maxFailures)
+                .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
+                .Take(execution.MaxConcurrentChecks)
+                .Select(x => x.Id)
+                .ToListAsync(ct).ConfigureAwait(false);
+        }
+
+        if (dueItemIds.Count == 0) return false;
+
+        var options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = execution.MaxConcurrentChecks,
+            CancellationToken = ct
+        };
+        await Parallel.ForEachAsync(dueItemIds, options, async (id, token) =>
+            await ProcessItem(execution, id, maxFailures, token).ConfigureAwait(false)
+        ).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Loads and health-checks a single item using its own database context, so checks
+    /// running in parallel don't share an EF context (which isn't thread-safe).
+    /// </summary>
+    private async Task ProcessItem(HealthCheckExecution execution, Guid id, int maxFailures, CancellationToken ct)
+    {
         await using var dbContext = new DavDatabaseContext();
         var dbClient = new DavDatabaseClient(dbContext);
-        var currentDateTime = DateTimeOffset.UtcNow;
-        var davItem = await GetHealthCheckQueueItems(dbClient)
-            .Where(x => x.HealthCheckFailureCount < maxFailures)
-            .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
-            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        var davItem = await dbClient.Ctx.Items
+            .FirstOrDefaultAsync(x => x.Id == id, ct).ConfigureAwait(false);
+        if (davItem == null) return;
 
-        if (davItem == null) return false;
-
-        await PerformHealthCheck(davItem, dbClient, concurrency, maxFailures, ct).ConfigureAwait(false);
-        return true;
+        await PerformHealthCheck(execution.Client, davItem, dbClient, execution.PerCheckConcurrency, maxFailures, ct)
+            .ConfigureAwait(false);
     }
 
     public static IOrderedQueryable<DavItem> GetHealthCheckQueueItems(DavDatabaseClient dbClient)
@@ -161,6 +212,7 @@ public class HealthCheckService : BackgroundService
 
     private async Task PerformHealthCheck
     (
+        INntpClient client,
         DavItem davItem,
         DavDatabaseClient dbClient,
         int concurrency,
@@ -172,7 +224,7 @@ public class HealthCheckService : BackgroundService
         {
             // update the release date, if null
             var segments = await GetAllSegments(davItem, dbClient, ct).ConfigureAwait(false);
-            if (davItem.ReleaseDate == null) await UpdateReleaseDate(davItem, segments, ct).ConfigureAwait(false);
+            if (davItem.ReleaseDate == null) await UpdateReleaseDate(client, davItem, segments, ct).ConfigureAwait(false);
 
 
             // setup progress tracking
@@ -186,7 +238,7 @@ public class HealthCheckService : BackgroundService
 
             // perform health check
             var progress = progressHook.ToPercentage(segments.Count);
-            await _usenetClient.CheckAllSegmentsAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
+            await client.CheckAllSegmentsAsync(segments, concurrency, progress, ct).ConfigureAwait(false);
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|100");
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
@@ -252,11 +304,11 @@ public class HealthCheckService : BackgroundService
         }
     }
 
-    private async Task UpdateReleaseDate(DavItem davItem, List<string> segments, CancellationToken ct)
+    private async Task UpdateReleaseDate(INntpClient client, DavItem davItem, List<string> segments, CancellationToken ct)
     {
         var firstSegmentId = StringUtil.EmptyToNull(segments.FirstOrDefault());
         if (firstSegmentId == null) return;
-        var articleHeadersResponse = await _usenetClient.HeadAsync(firstSegmentId, ct).ConfigureAwait(false);
+        var articleHeadersResponse = await client.HeadAsync(firstSegmentId, ct).ConfigureAwait(false);
         var articleHeaders = articleHeadersResponse.ArticleHeaders!;
         davItem.ReleaseDate = articleHeaders.Date;
     }
