@@ -91,6 +91,7 @@ class Program
             .AddSingleton(websocketManager)
             .AddSingleton<RcloneMountStatus>()
             .AddSingleton<UsenetStreamingClient>()
+            .AddSingleton<UsenetHealthCheckClient>()
             .AddSingleton<QueueManager>()
             .AddHostedService<HealthCheckService>()
             .AddHostedService<ArrMonitoringService>()
