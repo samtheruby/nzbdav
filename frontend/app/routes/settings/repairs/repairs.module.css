@@ -13,3 +13,19 @@
 .error {
     border: 1px solid red !important;
 }
+
+.tierRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.tierInput {
+    width: 70px;
+}
+
+.tierLabel {
+    white-space: nowrap;
+}

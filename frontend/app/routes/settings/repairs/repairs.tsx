@@ -3,6 +3,10 @@ import styles from "./repairs.module.css"
 import { type Dispatch, type SetStateAction } from "react";
 import { className } from "~/utils/styling";
 
+const backoffTiersKey = "repair.healthcheck.backoff-tiers";
+
+type BackoffTier = { MaxAgeDays: number | null, IntervalDays: number };
+
 type RepairsSettingsProps = {
     config: Record<string, string>
     setNewConfig: Dispatch<SetStateAction<Record<string, string>>>
@@ -50,11 +54,68 @@ export function RepairsSettings({ config, setNewConfig }: RepairsSettingsProps) 
                     Make sure this path is visible to your NzbDAV container.
                 </Form.Text>
             </Form.Group>
+            <hr />
+            <Form.Group>
+                <Form.Label>Health Check Schedule</Form.Label>
+                {getBackoffTiers(config).map((tier, i) => (
+                    <div key={i} className={styles.tierRow}>
+                        {tier.MaxAgeDays === null ? (
+                            <span className={styles.tierLabel}>Older releases:</span>
+                        ) : (
+                            <>
+                                <span className={styles.tierLabel}>Newer than</span>
+                                <Form.Control
+                                    type="number"
+                                    min={1}
+                                    className={styles.tierInput}
+                                    value={tier.MaxAgeDays}
+                                    onChange={e => setTierField(config, setNewConfig, i, "MaxAgeDays", e.target.value)} />
+                                <span className={styles.tierLabel}>days:</span>
+                            </>
+                        )}
+                        <span className={styles.tierLabel}>check every</span>
+                        <Form.Control
+                            type="number"
+                            min={1}
+                            className={styles.tierInput}
+                            value={tier.IntervalDays}
+                            onChange={e => setTierField(config, setNewConfig, i, "IntervalDays", e.target.value)} />
+                        <span className={styles.tierLabel}>day(s)</span>
+                    </div>
+                ))}
+                <Form.Text muted>
+                    How often each usenet file is re-verified, based on the release's age.
+                    Older releases are checked less often to save connections.
+                </Form.Text>
+            </Form.Group>
         </div>
     );
 }
 
+function getBackoffTiers(config: Record<string, string>): BackoffTier[] {
+    try {
+        const parsed = JSON.parse(config[backoffTiersKey] || "[]");
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function setTierField(
+    config: Record<string, string>,
+    setNewConfig: Dispatch<SetStateAction<Record<string, string>>>,
+    index: number,
+    field: keyof BackoffTier,
+    value: string,
+) {
+    const tiers = getBackoffTiers(config);
+    const parsed = parseInt(value);
+    tiers[index] = { ...tiers[index], [field]: Number.isNaN(parsed) ? 1 : Math.max(1, parsed) };
+    setNewConfig({ ...config, [backoffTiersKey]: JSON.stringify(tiers) });
+}
+
 export function isRepairsSettingsUpdated(config: Record<string, string>, newConfig: Record<string, string>) {
     return config["repair.enable"] !== newConfig["repair.enable"]
-        || config["media.library-dir"] !== newConfig["media.library-dir"];
+        || config["media.library-dir"] !== newConfig["media.library-dir"]
+        || config[backoffTiersKey] !== newConfig[backoffTiersKey];
 }

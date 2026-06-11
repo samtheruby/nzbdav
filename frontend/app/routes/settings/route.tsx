@@ -52,6 +52,7 @@ const defaultConfig = {
     "media.library-dir": "",
     "arr.instances": "{\"RadarrInstances\":[],\"SonarrInstances\":[],\"QueueRules\":[]}",
     "repair.enable": "false",
+    "repair.healthcheck.backoff-tiers": "[{\"MaxAgeDays\":14,\"IntervalDays\":1},{\"MaxAgeDays\":30,\"IntervalDays\":2},{\"MaxAgeDays\":365,\"IntervalDays\":7},{\"MaxAgeDays\":null,\"IntervalDays\":21}]",
     "db.is-startup-vacuum-enabled": "false",
     "maintenance.remove-orphaned-schedule-enabled": "false",
     "maintenance.remove-orphaned-schedule-time": "0",
