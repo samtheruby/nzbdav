@@ -24,6 +24,8 @@ public class HealthCheckService : BackgroundService
 
     private static readonly HashSet<string> _missingSegmentIds = [];
 
+    private CancellationTokenSource _rescheduleCts = new();
+
     public HealthCheckService
     (
         ConfigManager configManager,
@@ -38,8 +40,17 @@ public class HealthCheckService : BackgroundService
         _configManager.OnConfigChanged += (_, configEventArgs) =>
         {
             // when usenet host changes, clear the missing segments cache
-            if (!configEventArgs.ChangedConfig.ContainsKey("usenet.host")) return;
-            lock (_missingSegmentIds) _missingSegmentIds.Clear();
+            if (configEventArgs.ChangedConfig.ContainsKey("usenet.host"))
+                lock (_missingSegmentIds) _missingSegmentIds.Clear();
+
+            // when the health-check schedule changes, wake the loop to recompute it
+            if (configEventArgs.ChangedConfig.ContainsKey("repair.healthcheck.schedule-enabled") ||
+                configEventArgs.ChangedConfig.ContainsKey("repair.healthcheck.schedule-time"))
+            {
+                var old = Interlocked.Exchange(ref _rescheduleCts, new CancellationTokenSource());
+                old.Cancel();
+                old.Dispose();
+            }
         };
     }
 
@@ -56,36 +67,30 @@ public class HealthCheckService : BackgroundService
                     continue;
                 }
 
-                // get concurrency
-                var concurrency = _configManager.GetUsenetProviderConfig().TotalPooledConnections;
-                var maxFailures = _configManager.GetHealthCheckMaxFailures();
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                // a config change to the schedule cancels this token so the loop recomputes
+                using var cts = CancellationTokenSource
+                    .CreateLinkedTokenSource(stoppingToken, _rescheduleCts.Token);
 
-                // get the davItem to health-check.
-                // items that have failed too many times are skipped — they're marked
-                // failed and no longer retried, so one broken item can't loop forever.
-                await using var dbContext = new DavDatabaseContext();
-                var dbClient = new DavDatabaseClient(dbContext);
-                var currentDateTime = DateTimeOffset.UtcNow;
-                var davItem = await GetHealthCheckQueueItems(dbClient)
-                    .Where(x => x.HealthCheckFailureCount < maxFailures)
-                    .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
-                    .FirstOrDefaultAsync(cts.Token).ConfigureAwait(false);
-
-                // if there is no item to health-check, don't do anything
-                if (davItem == null)
+                if (_configManager.IsHealthCheckScheduleEnabled())
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(5), cts.Token).ConfigureAwait(false);
-                    continue;
+                    // scheduled: wait for the daily run time, then drain the due queue once.
+                    await RunScheduledDrain(cts.Token).ConfigureAwait(false);
                 }
-
-                // perform the health check
-                await PerformHealthCheck(davItem, dbClient, concurrency, maxFailures, cts.Token).ConfigureAwait(false);
+                else
+                {
+                    // continuous: process one due item, or idle briefly if the queue is empty.
+                    if (!await TryProcessNextDueItem(cts.Token).ConfigureAwait(false))
+                        await Task.Delay(TimeSpan.FromSeconds(5), cts.Token).ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException) when (SigtermUtil.IsSigtermTriggered())
             {
                 // OperationCanceledException is expected on sigterm
                 return;
+            }
+            catch (OperationCanceledException)
+            {
+                // the schedule config changed — loop and recompute the next run.
             }
             catch (Exception e)
             {
@@ -93,6 +98,50 @@ public class HealthCheckService : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Waits until the configured daily run time, then drains every currently-due
+    /// item before returning. The backoff schedule still decides which items are
+    /// due; this only confines when the worker is active (e.g. to off-hours).
+    /// </summary>
+    private async Task RunScheduledDrain(CancellationToken ct)
+    {
+        var now = DateTime.Now;
+        var nextRun = HealthCheckScheduler.ComputeNextScheduledRun(now, _configManager.HealthCheckSchedule());
+
+        Log.Information("HealthCheckScheduler: next run scheduled at {NextRun}", nextRun);
+        await Task.Delay(nextRun - now, ct).ConfigureAwait(false);
+
+        Log.Information("HealthCheckScheduler: draining due health checks");
+        while (await TryProcessNextDueItem(ct).ConfigureAwait(false))
+        {
+            // keep going until no item is currently due
+        }
+    }
+
+    /// <summary>
+    /// Health-checks the single most-due item, returning true if one was processed.
+    /// Items that have failed too many times are skipped — they're marked failed and
+    /// no longer retried, so one broken item can't loop forever.
+    /// </summary>
+    private async Task<bool> TryProcessNextDueItem(CancellationToken ct)
+    {
+        var concurrency = _configManager.GetUsenetProviderConfig().TotalPooledConnections;
+        var maxFailures = _configManager.GetHealthCheckMaxFailures();
+
+        await using var dbContext = new DavDatabaseContext();
+        var dbClient = new DavDatabaseClient(dbContext);
+        var currentDateTime = DateTimeOffset.UtcNow;
+        var davItem = await GetHealthCheckQueueItems(dbClient)
+            .Where(x => x.HealthCheckFailureCount < maxFailures)
+            .Where(x => x.NextHealthCheck == null || x.NextHealthCheck < currentDateTime)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+
+        if (davItem == null) return false;
+
+        await PerformHealthCheck(davItem, dbClient, concurrency, maxFailures, ct).ConfigureAwait(false);
+        return true;
     }
 
     public static IOrderedQueryable<DavItem> GetHealthCheckQueueItems(DavDatabaseClient dbClient)

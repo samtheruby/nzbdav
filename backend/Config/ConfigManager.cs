@@ -230,6 +230,23 @@ public class ConfigManager
         return configured is { Count: > 0 } ? configured : HealthCheckBackoffTier.Defaults;
     }
 
+    public bool IsHealthCheckScheduleEnabled()
+    {
+        var defaultValue = false;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("repair.healthcheck.schedule-enabled"));
+        return (configValue != null ? bool.Parse(configValue) : defaultValue);
+    }
+
+    public TimeSpan HealthCheckSchedule()
+    {
+        var defaultValue = TimeSpan.Zero;
+        var configValue = StringUtil.EmptyToNull(GetConfigValue("repair.healthcheck.schedule-time"));
+        if (configValue == null) return defaultValue;
+        if (!int.TryParse(configValue, out var totalMinutes)) return defaultValue;
+        if (totalMinutes < 0 || totalMinutes >= 24 * 60) return defaultValue;
+        return TimeSpan.FromMinutes(totalMinutes);
+    }
+
     public ArrConfig GetArrConfig()
     {
         var defaultValue = new ArrConfig();
