@@ -210,6 +210,61 @@
     transition: width 0.3s ease;
 }
 
+.provider-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.provider-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.provider-stat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 10px;
+    font-weight: 600;
+    color: #6b8494;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.provider-stat-count {
+    color: #a5b8c5;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+}
+
+.provider-stat-bar {
+    position: relative;
+    height: 6px;
+    background: hsl(198 100% 7%);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.provider-stat-bar-live {
+    position: absolute;
+    height: 100%;
+    width: 0%;
+    background-color: green;
+    transition: width 0.3s ease;
+}
+
+.provider-stat-bar-active {
+    position: absolute;
+    height: 100%;
+    width: 0%;
+    background-color: #2596be;
+    transition: width 0.3s ease;
+}
+
 .modal-overlay {
     position: fixed;
     top: 0;

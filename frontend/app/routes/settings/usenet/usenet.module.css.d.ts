@@ -27,6 +27,13 @@ declare const styles: {
   readonly "connection-bar": string;
   readonly "connection-bar-live": string;
   readonly "connection-bar-active": string;
+  readonly "provider-stats": string;
+  readonly "provider-stat": string;
+  readonly "provider-stat-header": string;
+  readonly "provider-stat-count": string;
+  readonly "provider-stat-bar": string;
+  readonly "provider-stat-bar-live": string;
+  readonly "provider-stat-bar-active": string;
   readonly "provider-actions": string;
   readonly "action-button": string;
   readonly "modal-overlay": string;

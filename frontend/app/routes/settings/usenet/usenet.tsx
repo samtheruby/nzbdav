@@ -3,7 +3,7 @@ import { type Dispatch, type SetStateAction, useState, useCallback, useEffect, u
 import { Button } from "react-bootstrap";
 import { receiveMessage } from "~/utils/websocket-util";
 
-const usenetConnectionsTopic = {'cxs': 'state'};
+const usenetConnectionsTopic = {'cxs': 'state', 'hcx': 'state'};
 
 type UsenetSettingsProps = {
     config: Record<string, string>
@@ -74,6 +74,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
     const [showModal, setShowModal] = useState(false);
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
     const [connections, setConnections] = useState<{[index: number]: ConnectionCounts}>({});
+    const [hcConnections, setHcConnections] = useState<{[index: number]: ConnectionCounts}>({});
     const providerConfig = useMemo(() => parseProviderConfig(config["usenet.providers"]), [config]);
 
     // handlers
@@ -109,17 +110,21 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         handleCloseModal();
     }, [config, providerConfig, editingIndex, setNewConfig, handleCloseModal]);
 
-    const handleConnectionsMessage = useCallback((message: string) => {
+    const handleConnectionsMessage = useCallback((
+        message: string,
+        setter: Dispatch<SetStateAction<{[index: number]: ConnectionCounts}>>,
+        maxFor: (provider: ConnectionDetails) => number,
+    ) => {
         const parts = (message || "0|0|0|0|1|0").split("|");
-        const [index, live, idle, _0, _1, _2] = parts.map((x: any) => Number(x));
+        const [index, live, idle] = parts.map((x: any) => Number(x));
         if (showModal) return;
         if (index >= providerConfig.Providers.length) return;
-        setConnections(prev => ({...prev, [index]: {
+        setter(prev => ({...prev, [index]: {
             active: live - idle,
             live: live,
-            max: providerConfig.Providers[index]?.MaxConnections || 1
+            max: maxFor(providerConfig.Providers[index]) || 1
         }}));
-    }, [setConnections]);
+    }, [showModal, providerConfig]);
 
     // effects
     useEffect(() => {
@@ -127,7 +132,10 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         let disposed = false;
         function connect() {
             ws = new WebSocket(window.location.origin.replace(/^http/, 'ws'));
-            ws.onmessage = receiveMessage((_, message) => handleConnectionsMessage(message));
+            ws.onmessage = receiveMessage((topic, message) => {
+                if (topic === "cxs") handleConnectionsMessage(message, setConnections, p => p.MaxConnections);
+                else if (topic === "hcx") handleConnectionsMessage(message, setHcConnections, p => roundDownToMultipleOfThree(p.HealthCheckConnections));
+            });
             ws.onopen = () => ws.send(JSON.stringify(usenetConnectionsTopic));
             ws.onerror = () => { ws.close() };
             ws.onclose = onClose;
@@ -136,9 +144,10 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         function onClose(e: CloseEvent) {
             !disposed && setTimeout(() => connect(), 1000);
             setConnections({});
+            setHcConnections({});
         }
         return connect();
-    }, [setConnections, handleConnectionsMessage]);
+    }, [setConnections, setHcConnections, handleConnectionsMessage]);
 
     // view
     return (
@@ -210,18 +219,6 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                                             </div>
 
                                             <div className={styles["provider-detail-item"]}>
-                                                {connections[index] && (
-                                                    <div className={styles["connection-bar"]}>
-                                                        <div
-                                                            className={styles["connection-bar-live"]}
-                                                            style={{ width: `${100 * (connections[index].live / connections[index].max)}%` }}
-                                                        />
-                                                        <div
-                                                            className={styles["connection-bar-active"]}
-                                                            style={{ width: `${100 * (connections[index].active / connections[index].max)}%` }}
-                                                        />
-                                                    </div>
-                                                )}
                                                 <div className={styles["provider-detail-icon"]}>
                                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                                         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -275,6 +272,10 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
 
                                         </div>
                                     </div>
+                                    <ProviderConnectionStats
+                                        streaming={connections[index]}
+                                        healthCheck={(provider.HealthCheckConnections ?? 0) > 0 ? hcConnections[index] : undefined}
+                                    />
                                 </div>
                             </div>
                         ))}
@@ -288,6 +289,37 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                 onClose={handleCloseModal}
                 onSave={handleSaveProvider}
             />
+        </div>
+    );
+}
+
+type ProviderConnectionStatsProps = {
+    streaming?: ConnectionCounts;
+    healthCheck?: ConnectionCounts;
+};
+
+function ProviderConnectionStats({ streaming, healthCheck }: ProviderConnectionStatsProps) {
+    if (!streaming && !healthCheck) return null;
+    return (
+        <div className={styles["provider-stats"]}>
+            {streaming && <ConnectionStat label="Streaming" counts={streaming} />}
+            {healthCheck && <ConnectionStat label="Health Checks" counts={healthCheck} />}
+        </div>
+    );
+}
+
+function ConnectionStat({ label, counts }: { label: string, counts: ConnectionCounts }) {
+    const max = counts.max || 1;
+    return (
+        <div className={styles["provider-stat"]}>
+            <div className={styles["provider-stat-header"]}>
+                <span>{label}</span>
+                <span className={styles["provider-stat-count"]}>{counts.active} active / {counts.max} max</span>
+            </div>
+            <div className={styles["provider-stat-bar"]}>
+                <div className={styles["provider-stat-bar-live"]} style={{ width: `${100 * (counts.live / max)}%` }} />
+                <div className={styles["provider-stat-bar-active"]} style={{ width: `${100 * (counts.active / max)}%` }} />
+            </div>
         </div>
     );
 }
