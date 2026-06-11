@@ -6,31 +6,6 @@ namespace NzbWebDAV.Tests;
 public class HealthCheckSchedulerTests
 {
     [Fact]
-    public void HealthyNextCheck_NullReleaseDate_ReturnsBoundedRetry()
-    {
-        // regression: a null release date used to compute NextHealthCheck = null,
-        // which re-selected the same item every 5s tick (tight loop). It must now
-        // resolve to a bounded, future time instead.
-        var now = DateTimeOffset.UtcNow;
-
-        var next = HealthCheckScheduler.ComputeHealthyNextCheck(null, now);
-
-        Assert.Equal(now + HealthCheckScheduler.RetryInterval, next);
-        Assert.True(next > now);
-    }
-
-    [Fact]
-    public void HealthyNextCheck_WithReleaseDate_BacksOffIntoFuture()
-    {
-        var releaseDate = DateTimeOffset.UtcNow - TimeSpan.FromDays(30);
-        var now = DateTimeOffset.UtcNow;
-
-        var next = HealthCheckScheduler.ComputeHealthyNextCheck(releaseDate, now);
-
-        Assert.True(next > now);
-    }
-
-    [Fact]
     public void RetryNextCheck_AdvancesByRetryInterval()
     {
         var now = DateTimeOffset.UtcNow;

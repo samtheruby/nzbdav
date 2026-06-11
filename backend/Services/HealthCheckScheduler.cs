@@ -1,3 +1,4 @@
+using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
 
 namespace NzbWebDAV.Services;
@@ -17,19 +18,34 @@ public static class HealthCheckScheduler
     public static readonly TimeSpan RetryInterval = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// Next check time after a successful (healthy) check.
+    /// Next check time after a successful (healthy) check, using the tiered backoff
+    /// schedule: older releases are checked less often.
     /// A null release date resolves to a bounded retry rather than null — a null
     /// here previously made NextHealthCheck null, which re-selected the same item
     /// every tick (tight loop).
     /// </summary>
-    public static DateTimeOffset ComputeHealthyNextCheck(DateTimeOffset? releaseDate, DateTimeOffset now)
+    public static DateTimeOffset ComputeTieredNextCheck
+    (
+        DateTimeOffset? releaseDate,
+        DateTimeOffset now,
+        IReadOnlyList<HealthCheckBackoffTier> tiers
+    )
     {
         if (releaseDate is null) return now + RetryInterval;
+        if (tiers is null || tiers.Count == 0) return now + TimeSpan.FromDays(1);
 
-        // geometric backoff: interval == current file age, doubles each pass.
-        // (replaced by the tiered scheme in Module 2.)
-        return releaseDate.Value + 2 * (now - releaseDate.Value);
+        var ageDays = (now - releaseDate.Value).TotalDays;
+        foreach (var tier in tiers)
+            if (tier.MaxAgeDays is null || ageDays < tier.MaxAgeDays.Value)
+                return now + ClampInterval(tier.IntervalDays);
+
+        // no catch-all tier matched — fall back to the last (oldest) band.
+        return now + ClampInterval(tiers[^1].IntervalDays);
     }
+
+    // a non-positive interval would re-select the item immediately (tight loop);
+    // clamp to at least one day.
+    private static TimeSpan ClampInterval(int intervalDays) => TimeSpan.FromDays(Math.Max(1, intervalDays));
 
     /// <summary>
     /// Next check time after a transient failure (timeout, contention, circuit-breaker).
