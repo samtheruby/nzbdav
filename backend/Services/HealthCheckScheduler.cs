@@ -43,4 +43,10 @@ public static class HealthCheckScheduler
     /// </summary>
     public static bool IsTransientFailure(Exception e)
         => e is not OperationCanceledException && e is not UsenetArticleNotFoundException;
+
+    /// <summary>
+    /// Whether an item has failed transiently enough consecutive times to be
+    /// marked failed and stop being retried, instead of looping forever.
+    /// </summary>
+    public static bool IsTerminalFailure(int failureCount, int maxFailures) => failureCount >= maxFailures;
 }

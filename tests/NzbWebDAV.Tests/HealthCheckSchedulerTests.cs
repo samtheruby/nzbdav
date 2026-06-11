@@ -58,4 +58,16 @@ public class HealthCheckSchedulerTests
         // timeouts, circuit-breaker trips, STAT contention → retry later, do not condemn.
         Assert.True(HealthCheckScheduler.IsTransientFailure(new TimeoutException("STAT timed out")));
     }
+
+    [Theory]
+    [InlineData(0, 5, false)]
+    [InlineData(4, 5, false)]
+    [InlineData(5, 5, true)]
+    [InlineData(6, 5, true)]
+    public void IsTerminalFailure_TrueOnceCountReachesMax(int failureCount, int maxFailures, bool expected)
+    {
+        // after maxFailures consecutive transient errors the item is marked failed
+        // and stops being retried, instead of looping forever.
+        Assert.Equal(expected, HealthCheckScheduler.IsTerminalFailure(failureCount, maxFailures));
+    }
 }
