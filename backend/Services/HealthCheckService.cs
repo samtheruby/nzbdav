@@ -137,8 +137,9 @@ public class HealthCheckService : BackgroundService
             _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
 
             // update the database
-            davItem.LastHealthCheck = DateTimeOffset.UtcNow;
-            davItem.NextHealthCheck = davItem.ReleaseDate + 2 * (davItem.LastHealthCheck - davItem.ReleaseDate);
+            var now = DateTimeOffset.UtcNow;
+            davItem.LastHealthCheck = now;
+            davItem.NextHealthCheck = HealthCheckScheduler.ComputeHealthyNextCheck(davItem.ReleaseDate, now);
             dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
             {
                 Id = Guid.NewGuid(),
@@ -161,6 +162,32 @@ public class HealthCheckService : BackgroundService
 
             // when usenet article is missing, perform repairs
             await Repair(davItem, dbClient, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // shutdown or reschedule — let the outer loop decide what to do.
+            throw;
+        }
+        catch (Exception e)
+        {
+            // transient failure (timeout, streaming contention, circuit-breaker trip).
+            // Do NOT condemn the file. Advance NextHealthCheck by a short retry interval
+            // and move on, so one flaky item can't re-select forever and stall the queue.
+            var now = DateTimeOffset.UtcNow;
+            davItem.LastHealthCheck = now;
+            davItem.NextHealthCheck = HealthCheckScheduler.ComputeRetryNextCheck(now);
+            _ = _websocketManager.SendMessage(WebsocketTopic.HealthItemProgress, $"{davItem.Id}|done");
+            dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
+            {
+                Id = Guid.NewGuid(),
+                DavItemId = davItem.Id,
+                Path = davItem.Path,
+                CreatedAt = now,
+                Result = HealthCheckResult.HealthResult.Unhealthy,
+                RepairStatus = HealthCheckResult.RepairAction.ActionNeeded,
+                Message = $"Transient error during health check, will retry: {e.Message}"
+            }));
+            await dbClient.Ctx.SaveChangesAsync(ct).ConfigureAwait(false);
         }
     }
 
