@@ -1,5 +1,6 @@
 using NzbWebDAV.Config;
 using NzbWebDAV.Exceptions;
+using NzbWebDAV.Models;
 
 namespace NzbWebDAV.Services;
 
@@ -16,6 +17,37 @@ public static class HealthCheckScheduler
     /// short so the item is retried soon without tight-looping the whole queue.
     /// </summary>
     public static readonly TimeSpan RetryInterval = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Connections one health check uses to STAT a file's segments concurrently.
+    /// The dedicated health-check connection count is rounded down to a multiple of
+    /// this so every check gets a full set; max concurrent checks = connections / 3.
+    /// </summary>
+    public const int HealthCheckConnectionsPerCheck = 3;
+
+    /// <summary>
+    /// Rounds a connection count down to a whole multiple of
+    /// <see cref="HealthCheckConnectionsPerCheck"/> (never negative), so the pool
+    /// divides evenly into checks with no unusable remainder.
+    /// </summary>
+    public static int RoundDownToMultipleOfThree(int value)
+        => value < 0 ? 0 : value - (value % HealthCheckConnectionsPerCheck);
+
+    /// <summary>
+    /// How many health checks may run concurrently, driven by the provider with the
+    /// most dedicated health-check connections (the de-facto primary). Returns 0 when
+    /// no provider has a usable health-check pool — callers fall back to the shared
+    /// streaming pool with a single check at a time.
+    /// </summary>
+    public static int ComputeMaxConcurrentChecks(UsenetProviderConfig providerConfig)
+    {
+        var maxConnections = providerConfig.Providers
+            .Where(p => p.Type != ProviderType.Disabled)
+            .Select(p => RoundDownToMultipleOfThree(p.HealthCheckConnections))
+            .DefaultIfEmpty(0)
+            .Max();
+        return maxConnections / HealthCheckConnectionsPerCheck;
+    }
 
     /// <summary>
     /// Next check time after a successful (healthy) check, using the tiered backoff
