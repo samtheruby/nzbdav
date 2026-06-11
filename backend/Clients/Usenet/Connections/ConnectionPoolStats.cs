@@ -1,5 +1,4 @@
 ﻿using NzbWebDAV.Config;
-using NzbWebDAV.Models;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Clients.Usenet.Connections;
@@ -13,19 +12,29 @@ public class ConnectionPoolStats
     private int _totalIdle;
     private readonly UsenetProviderConfig _providerConfig;
     private readonly WebsocketManager _websocketManager;
+    private readonly WebsocketTopic _topic;
+    private readonly Func<UsenetProviderConfig.ConnectionDetails, int> _maxConnectionsSelector;
 
-    public ConnectionPoolStats(UsenetProviderConfig providerConfig, WebsocketManager websocketManager)
+    /// <param name="topic">Which websocket topic to broadcast this pool's stats on.</param>
+    /// <param name="maxConnectionsSelector">
+    /// Per-provider capacity for this pool kind (streaming vs health-check). A provider
+    /// contributes to (and is reported for) this pool only when its value is greater than 0.
+    /// </param>
+    public ConnectionPoolStats(
+        UsenetProviderConfig providerConfig,
+        WebsocketManager websocketManager,
+        WebsocketTopic topic,
+        Func<UsenetProviderConfig.ConnectionDetails, int> maxConnectionsSelector)
     {
         var count = providerConfig.Providers.Count;
         _live = new int[count];
         _idle = new int[count];
-        _max = providerConfig.Providers
-            .Where(x => x.Type == ProviderType.Pooled)
-            .Select(x => x.MaxConnections)
-            .Sum();
+        _maxConnectionsSelector = maxConnectionsSelector;
+        _max = providerConfig.Providers.Select(maxConnectionsSelector).Sum();
 
         _providerConfig = providerConfig;
         _websocketManager = websocketManager;
+        _topic = topic;
     }
 
     public EventHandler<ConnectionPoolChangedEventArgs> GetOnConnectionPoolChanged(int providerIndex)
@@ -34,7 +43,7 @@ public class ConnectionPoolStats
 
         void OnEvent(object? _, ConnectionPoolChangedEventArgs args)
         {
-            if (_providerConfig.Providers[providerIndex].Type == ProviderType.Pooled)
+            if (_maxConnectionsSelector(_providerConfig.Providers[providerIndex]) > 0)
             {
                 lock (this)
                 {
@@ -46,7 +55,7 @@ public class ConnectionPoolStats
             }
 
             var message = $"{providerIndex}|{args.Live}|{args.Idle}|{_totalLive}|{_max}|{_totalIdle}";
-            _websocketManager.SendMessage(WebsocketTopic.UsenetConnections, message);
+            _websocketManager.SendMessage(_topic, message);
         }
     }
 
