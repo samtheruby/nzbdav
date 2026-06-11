@@ -45,4 +45,29 @@ public class HealthCheckSchedulerTests
         // and stops being retried, instead of looping forever.
         Assert.Equal(expected, HealthCheckScheduler.IsTerminalFailure(failureCount, maxFailures));
     }
+
+    [Fact]
+    public void NextScheduledRun_LaterToday_SchedulesToday()
+    {
+        var now = new DateTime(2026, 6, 11, 10, 0, 0);
+        var next = HealthCheckScheduler.ComputeNextScheduledRun(now, TimeSpan.FromHours(15));
+        Assert.Equal(new DateTime(2026, 6, 11, 15, 0, 0), next);
+    }
+
+    [Fact]
+    public void NextScheduledRun_AlreadyPassedToday_SchedulesTomorrow()
+    {
+        var now = new DateTime(2026, 6, 11, 20, 0, 0);
+        var next = HealthCheckScheduler.ComputeNextScheduledRun(now, TimeSpan.FromHours(15));
+        Assert.Equal(new DateTime(2026, 6, 12, 15, 0, 0), next);
+    }
+
+    [Fact]
+    public void NextScheduledRun_ExactlyNow_SchedulesTomorrow()
+    {
+        // at exactly the run time, schedule for tomorrow to avoid double-running.
+        var now = new DateTime(2026, 6, 11, 15, 0, 0);
+        var next = HealthCheckScheduler.ComputeNextScheduledRun(now, TimeSpan.FromHours(15));
+        Assert.Equal(new DateTime(2026, 6, 12, 15, 0, 0), next);
+    }
 }

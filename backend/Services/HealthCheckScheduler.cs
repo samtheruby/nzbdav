@@ -65,4 +65,14 @@ public static class HealthCheckScheduler
     /// marked failed and stop being retried, instead of looping forever.
     /// </summary>
     public static bool IsTerminalFailure(int failureCount, int maxFailures) => failureCount >= maxFailures;
+
+    /// <summary>
+    /// The next occurrence of the daily scheduled run time. If the time has already
+    /// passed today (or is exactly now), schedules for tomorrow to avoid double-running.
+    /// </summary>
+    public static DateTime ComputeNextScheduledRun(DateTime now, TimeSpan scheduleTime)
+    {
+        var todayRun = now.Date + scheduleTime;
+        return todayRun > now ? todayRun : todayRun.AddDays(1);
+    }
 }
