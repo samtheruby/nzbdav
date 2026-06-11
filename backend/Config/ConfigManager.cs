@@ -224,6 +224,12 @@ public class ConfigManager
         return maxFailures;
     }
 
+    public List<HealthCheckBackoffTier> GetHealthCheckBackoffTiers()
+    {
+        var configured = GetConfigValue<List<HealthCheckBackoffTier>>("repair.healthcheck.backoff-tiers");
+        return configured is { Count: > 0 } ? configured : HealthCheckBackoffTier.Defaults;
+    }
+
     public ArrConfig GetArrConfig()
     {
         var defaultValue = new ArrConfig();

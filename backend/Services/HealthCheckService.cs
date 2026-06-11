@@ -144,7 +144,8 @@ public class HealthCheckService : BackgroundService
             // update the database
             var now = DateTimeOffset.UtcNow;
             davItem.LastHealthCheck = now;
-            davItem.NextHealthCheck = HealthCheckScheduler.ComputeHealthyNextCheck(davItem.ReleaseDate, now);
+            davItem.NextHealthCheck = HealthCheckScheduler.ComputeTieredNextCheck(
+                davItem.ReleaseDate, now, _configManager.GetHealthCheckBackoffTiers());
             davItem.HealthCheckFailureCount = 0;
             dbClient.Ctx.HealthCheckResults.Add(SendStatus(new HealthCheckResult()
             {
