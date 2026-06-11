@@ -25,7 +25,17 @@ type ConnectionDetails = {
     User: string;
     Pass: string;
     MaxConnections: number;
+    HealthCheckConnections: number;
 };
+
+// each health check uses 3 connections; the dedicated pool is rounded down to a
+// whole multiple of 3 so it divides evenly into concurrent checks.
+const HEALTH_CHECK_CONNECTIONS_PER_CHECK = 3;
+
+function roundDownToMultipleOfThree(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return value - (value % HEALTH_CHECK_CONNECTIONS_PER_CHECK);
+}
 
 type ConnectionCounts = {
     live: number;
@@ -296,6 +306,7 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
     const [user, setUser] = useState(provider?.User || "");
     const [pass, setPass] = useState(provider?.Pass || "");
     const [maxConnections, setMaxConnections] = useState(provider?.MaxConnections?.toString() || "");
+    const [healthCheckConnections, setHealthCheckConnections] = useState(provider?.HealthCheckConnections?.toString() || "0");
     const [type, setType] = useState<ProviderType>(provider?.Type ?? ProviderType.Pooled);
     const [isTestingConnection, setIsTestingConnection] = useState(false);
     const [connectionTested, setConnectionTested] = useState(false);
@@ -310,6 +321,7 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
             setUser(provider?.User || "");
             setPass(provider?.Pass || "");
             setMaxConnections(provider?.MaxConnections?.toString() || "");
+            setHealthCheckConnections(provider?.HealthCheckConnections?.toString() || "0");
             setType(provider?.Type ?? ProviderType.Pooled);
             setConnectionTested(false);
             setTestError(null);
@@ -374,8 +386,9 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
             User: user,
             Pass: pass,
             MaxConnections: parseInt(maxConnections, 10),
+            HealthCheckConnections: roundDownToMultipleOfThree(parseInt(healthCheckConnections, 10)),
         });
-    }, [type, host, port, useSsl, user, pass, maxConnections, onSave]);
+    }, [type, host, port, useSsl, user, pass, maxConnections, healthCheckConnections, onSave]);
 
     const handleOverlayClick = useCallback((e: React.MouseEvent) => {
         if (e.target === e.currentTarget) {
@@ -486,6 +499,23 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
                                 placeholder="20"
                                 value={maxConnections}
                                 onChange={(e) => setMaxConnections(e.target.value)}
+                            />
+                        </div>
+
+                        <div className={styles["form-group"]}>
+                            <label htmlFor="provider-health-check-connections" className={styles["form-label"]}>
+                                Health Check Connections
+                            </label>
+                            <input
+                                type="text"
+                                id="provider-health-check-connections"
+                                className={styles["form-input"]}
+                                placeholder="0"
+                                value={healthCheckConnections}
+                                onChange={(e) => setHealthCheckConnections(e.target.value)}
+                                onBlur={(e) => setHealthCheckConnections(
+                                    roundDownToMultipleOfThree(parseInt(e.target.value, 10)).toString()
+                                )}
                             />
                         </div>
 
