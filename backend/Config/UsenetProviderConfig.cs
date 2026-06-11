@@ -20,5 +20,10 @@ public class UsenetProviderConfig
         public required string User { get; set; }
         public required string Pass { get; set; }
         public required int MaxConnections { get; set; }
+
+        // Dedicated connections this provider opens for health checks, separate from
+        // (additive to) MaxConnections used for streaming. Rounded down to a multiple
+        // of HealthCheckConnectionsPerCheck. 0 = this provider does no health checks.
+        public int HealthCheckConnections { get; set; }
     }
 }
