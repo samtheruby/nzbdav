@@ -8,8 +8,9 @@ const usenetConnectionsTopic = {'cxs': 'state'};
 export function LiveUsenetConnections() {
     const navigate = useNavigate();
     const [connections, setConnections] = useState<string | null>(null);
-    const parts = (connections || "0|0|0|0|1|0").split("|");
-    const [_0, _1, _2, live, max, idle] = parts.map(x => Number(x));
+    // message: totalLive|totalMax|totalIdle|<per-provider snapshot>
+    const parts = (connections || "0|1|0|").split("|");
+    const [live, max, idle] = parts.map(x => Number(x));
     const active = live - idle;
     const activePercent = 100 * (active / max);
     const livePercent = 100 * (live / max);
@@ -19,7 +20,7 @@ export function LiveUsenetConnections() {
         let disposed = false;
         function connect() {
             ws = new WebSocket(window.location.origin.replace(/^http/, 'ws'));
-            ws.onmessage = receiveMessage((_, message) => setConnections(message));
+            ws.onmessage = receiveMessage((topic, message) => { if (topic === "cxs") setConnections(message); });
             ws.onopen = () => ws.send(JSON.stringify(usenetConnectionsTopic));
             ws.onerror = () => { ws.close() };
             ws.onclose = onClose;

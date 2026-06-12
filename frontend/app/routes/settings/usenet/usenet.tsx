@@ -115,15 +115,23 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
         setter: Dispatch<SetStateAction<{[index: number]: ConnectionCounts}>>,
         maxFor: (provider: ConnectionDetails) => number,
     ) => {
-        const parts = (message || "0|0|0|0|1|0").split("|");
-        const [index, live, idle] = parts.map((x: any) => Number(x));
         if (showModal) return;
-        if (index >= providerConfig.Providers.length) return;
-        setter(prev => ({...prev, [index]: {
-            active: live - idle,
-            live: live,
-            max: maxFor(providerConfig.Providers[index]) || 1
-        }}));
+        // message: totalLive|totalMax|totalIdle|index:live:idle;index:live:idle;...
+        // The per-provider snapshot is a single message so every provider's bar is
+        // populated on load (not just the last one to change).
+        const snapshot = (message || "0|0|0|").split("|")[3] || "";
+        const next: {[index: number]: ConnectionCounts} = {};
+        for (const entry of snapshot.split(";")) {
+            if (!entry) continue;
+            const [index, live, idle] = entry.split(":").map(Number);
+            if (index >= providerConfig.Providers.length) continue;
+            next[index] = {
+                live: live,
+                active: live - idle,
+                max: maxFor(providerConfig.Providers[index]) || 1
+            };
+        }
+        setter(next);
     }, [showModal, providerConfig]);
 
     // effects
