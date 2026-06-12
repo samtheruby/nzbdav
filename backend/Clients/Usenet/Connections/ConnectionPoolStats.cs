@@ -1,4 +1,5 @@
-﻿using NzbWebDAV.Config;
+using System.Text;
+using NzbWebDAV.Config;
 using NzbWebDAV.Websocket;
 
 namespace NzbWebDAV.Clients.Usenet.Connections;
@@ -7,18 +8,15 @@ public class ConnectionPoolStats
 {
     private readonly int[] _live;
     private readonly int[] _idle;
+    private readonly bool[] _countsTowardTotal;
     private readonly int _max;
-    private int _totalLive;
-    private int _totalIdle;
-    private readonly UsenetProviderConfig _providerConfig;
     private readonly WebsocketManager _websocketManager;
     private readonly WebsocketTopic _topic;
-    private readonly Func<UsenetProviderConfig.ConnectionDetails, int> _maxConnectionsSelector;
 
     /// <param name="topic">Which websocket topic to broadcast this pool's stats on.</param>
     /// <param name="maxConnectionsSelector">
     /// Per-provider capacity for this pool kind (streaming vs health-check). A provider
-    /// contributes to (and is reported for) this pool only when its value is greater than 0.
+    /// contributes to the reported total only when its value is greater than 0.
     /// </param>
     public ConnectionPoolStats(
         UsenetProviderConfig providerConfig,
@@ -29,10 +27,9 @@ public class ConnectionPoolStats
         var count = providerConfig.Providers.Count;
         _live = new int[count];
         _idle = new int[count];
-        _maxConnectionsSelector = maxConnectionsSelector;
+        _countsTowardTotal = providerConfig.Providers.Select(p => maxConnectionsSelector(p) > 0).ToArray();
         _max = providerConfig.Providers.Select(maxConnectionsSelector).Sum();
 
-        _providerConfig = providerConfig;
         _websocketManager = websocketManager;
         _topic = topic;
     }
@@ -43,20 +40,44 @@ public class ConnectionPoolStats
 
         void OnEvent(object? _, ConnectionPoolChangedEventArgs args)
         {
-            if (_maxConnectionsSelector(_providerConfig.Providers[providerIndex]) > 0)
+            string message;
+            lock (this)
             {
-                lock (this)
+                _live[providerIndex] = args.Live;
+                _idle[providerIndex] = args.Idle;
+
+                var totalLive = 0;
+                var totalIdle = 0;
+                for (var i = 0; i < _live.Length; i++)
                 {
-                    _live[providerIndex] = args.Live;
-                    _idle[providerIndex] = args.Idle;
-                    _totalLive = _live.Sum();
-                    _totalIdle = _idle.Sum();
+                    if (!_countsTowardTotal[i]) continue;
+                    totalLive += _live[i];
+                    totalIdle += _idle[i];
                 }
+
+                // A full snapshot of every provider goes out on each change, because the
+                // websocket only replays the last message per topic to new subscribers —
+                // a per-provider message would leave all but one provider blank on load.
+                message = BuildMessage(totalLive, _max, totalIdle, _live, _idle);
             }
 
-            var message = $"{providerIndex}|{args.Live}|{args.Idle}|{_totalLive}|{_max}|{_totalIdle}";
             _websocketManager.SendMessage(_topic, message);
         }
+    }
+
+    /// <summary>
+    /// Format: <c>totalLive|totalMax|totalIdle|index:live:idle;index:live:idle;...</c>
+    /// </summary>
+    public static string BuildMessage(int totalLive, int totalMax, int totalIdle, int[] live, int[] idle)
+    {
+        var snapshot = new StringBuilder();
+        for (var i = 0; i < live.Length; i++)
+        {
+            if (i > 0) snapshot.Append(';');
+            snapshot.Append(i).Append(':').Append(live[i]).Append(':').Append(idle[i]);
+        }
+
+        return $"{totalLive}|{totalMax}|{totalIdle}|{snapshot}";
     }
 
     public sealed class ConnectionPoolChangedEventArgs(int live, int idle, int max) : EventArgs
