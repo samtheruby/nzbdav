@@ -225,7 +225,7 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                                                     </svg>
                                                 </div>
                                                 <div className={styles["provider-detail-content"]}>
-                                                    <span className={styles["provider-detail-label"]}>Max Connections</span>
+                                                    <span className={styles["provider-detail-label"]}>Max Streaming Connections</span>
                                                     <span className={styles["provider-detail-value"]}>{provider.MaxConnections}</span>
                                                 </div>
                                             </div>
@@ -522,7 +522,7 @@ function ProviderModal({ show, provider, onClose, onSave }: ProviderModalProps) 
 
                         <div className={styles["form-group"]}>
                             <label htmlFor="provider-max-connections" className={styles["form-label"]}>
-                                Max Connections
+                                Max Streaming Connections
                             </label>
                             <input
                                 type="text"
