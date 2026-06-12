@@ -228,18 +228,6 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
 
                                             <div className={styles["provider-detail-item"]}>
                                                 <div className={styles["provider-detail-icon"]}>
-                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                                                    </svg>
-                                                </div>
-                                                <div className={styles["provider-detail-content"]}>
-                                                    <span className={styles["provider-detail-label"]}>Max Streaming Connections</span>
-                                                    <span className={styles["provider-detail-value"]}>{provider.MaxConnections}</span>
-                                                </div>
-                                            </div>
-
-                                            <div className={styles["provider-detail-item"]}>
-                                                <div className={styles["provider-detail-icon"]}>
                                                     {provider.UseSsl ? (
                                                         // Closed lock icon
                                                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -261,6 +249,30 @@ export function UsenetSettings({ config, setNewConfig }: UsenetSettingsProps) {
                                                     <span className={styles["provider-detail-value"]}>
                                                         {provider.UseSsl ? "SSL Enabled" : "No SSL"}
                                                     </span>
+                                                </div>
+                                            </div>
+
+                                            <div className={styles["provider-detail-item"]}>
+                                                <div className={styles["provider-detail-icon"]}>
+                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                                    </svg>
+                                                </div>
+                                                <div className={styles["provider-detail-content"]}>
+                                                    <span className={styles["provider-detail-label"]}>Max Streaming Connections</span>
+                                                    <span className={styles["provider-detail-value"]}>{provider.MaxConnections}</span>
+                                                </div>
+                                            </div>
+
+                                            <div className={styles["provider-detail-item"]}>
+                                                <div className={styles["provider-detail-icon"]}>
+                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                                                    </svg>
+                                                </div>
+                                                <div className={styles["provider-detail-content"]}>
+                                                    <span className={styles["provider-detail-label"]}>Health Check Connections</span>
+                                                    <span className={styles["provider-detail-value"]}>{provider.HealthCheckConnections ?? 0}</span>
                                                 </div>
                                             </div>
 
