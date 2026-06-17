@@ -21,9 +21,29 @@ namespace NzbWebDAV.Par2Recovery
             CancellationToken ct = default
         )
         {
-            Par2Packet? packet = null;
+            await foreach (var packet in ReadAllPacketsAsync(stream, ct).ConfigureAwait(false))
+            {
+                if (packet is FileDesc newFile)
+                {
+                    yield return newFile;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reads every packet from a par2 stream. Unknown packet types are surfaced as the
+        /// base <see cref="Par2Packet"/>. Stops at the first malformed packet (matching the
+        /// lenient behaviour of <see cref="ReadFileDescriptions"/>).
+        /// </summary>
+        public static async IAsyncEnumerable<Par2Packet> ReadAllPacketsAsync
+        (
+            Stream stream,
+            CancellationToken ct = default
+        )
+        {
             while (stream.Position < stream.Length && !ct.IsCancellationRequested)
             {
+                Par2Packet packet;
                 try
                 {
                     packet = await ReadPacketAsync(stream).ConfigureAwait(false);
@@ -34,10 +54,7 @@ namespace NzbWebDAV.Par2Recovery
                     yield break;
                 }
 
-                if (packet is FileDesc newFile)
-                {
-                    yield return newFile;
-                }
+                yield return packet;
             }
         }
 
@@ -58,6 +75,15 @@ namespace NzbWebDAV.Par2Recovery
             {
                 case FileDesc.PacketType:
                     result = new FileDesc(header);
+                    break;
+                case Main.PacketType:
+                    result = new Main(header);
+                    break;
+                case Ifsc.PacketType:
+                    result = new Ifsc(header);
+                    break;
+                case RecoverySlice.PacketType:
+                    result = new RecoverySlice(header);
                     break;
                 default:
                     result = new Par2Packet(header);
