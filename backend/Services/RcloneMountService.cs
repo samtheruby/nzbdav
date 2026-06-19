@@ -202,6 +202,12 @@ public class RcloneMountService(ConfigManager configManager, RcloneMountStatus s
         try { Directory.CreateDirectory(CacheDir); }
         catch (Exception ex) { Log.Warning(ex, "Could not create rclone cache dir {Dir}", CacheDir); }
 
+        // Reclaim VFS cache namespaces orphaned by previous mounts before launching, so
+        // --vfs-cache-max-size bounds total usage and any historic leakage is recovered.
+        RcloneVfsCacheCleaner.PurgeStaleNamespaces(
+            CacheDir, RcloneMountCommandBuilder.RemoteName,
+            msg => Log.Information("{Message}", msg));
+
         string obscuredPass;
         try
         {
