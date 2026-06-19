@@ -11,9 +11,6 @@ public class RcloneMountOptions
     /// <summary>Filesystem path to mount onto (e.g. /mnt/nzbdav).</summary>
     public required string MountDir { get; init; }
 
-    /// <summary>URL of the WebDAV server to mount (e.g. http://localhost:8080).</summary>
-    public required string WebdavUrl { get; init; }
-
     /// <summary>Owner uid for mounted files (PUID).</summary>
     public required int Uid { get; init; }
 
@@ -42,16 +39,30 @@ public class RcloneMountOptions
 /// </summary>
 public static class RcloneMountCommandBuilder
 {
+    /// <summary>
+    /// Name of the WebDAV remote the mount points at. Using a *named* remote (rather
+    /// than an on-the-fly ":webdav:" connection string) keeps rclone's VFS cache
+    /// namespace stable across restarts: rclone keys the cache dir on the remote name
+    /// for named remotes, but on a hash of the full config — including the
+    /// non-deterministically-obscured password — for connection strings. A connection
+    /// string therefore mints a brand-new cache namespace on every restart, and the
+    /// --vfs-cache-max-size cap (which is per-namespace) never prunes the orphans.
+    /// </summary>
+    public const string RemoteName = "nzbdav";
+
+    // rclone reads remote config from RCLONE_CONFIG_<NAME>_<KEY>, with the name
+    // upper-cased. Keep this in sync with RemoteName.
+    private const string EnvPrefix = "RCLONE_CONFIG_NZBDAV_";
+
     public static List<string> Build(RcloneMountOptions options)
     {
         var args = new List<string>
         {
             "mount",
-            // on-the-fly webdav remote; url/credentials supplied via flags + env.
-            ":webdav:",
+            // Stable named remote (defined via BuildRemoteEnvironment); url/credentials
+            // are supplied through its env config, never on the argument list.
+            $"{RemoteName}:",
             options.MountDir,
-            $"--webdav-url={options.WebdavUrl}",
-            "--webdav-vendor=other",
             $"--uid={options.Uid}",
             $"--gid={options.Gid}",
 
@@ -88,4 +99,19 @@ public static class RcloneMountCommandBuilder
 
         return args;
     }
+
+    /// <summary>
+    /// Environment variables that define the named WebDAV remote (<see cref="RemoteName"/>)
+    /// rclone mounts. Secrets stay in the environment, never on the argument list. See
+    /// <see cref="RemoteName"/> for why a named remote (not a connection string) is used.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> BuildRemoteEnvironment(
+        string webdavUrl, string user, string obscuredPassword) => new Dictionary<string, string>
+    {
+        [EnvPrefix + "TYPE"] = "webdav",
+        [EnvPrefix + "URL"] = webdavUrl,
+        [EnvPrefix + "VENDOR"] = "other",
+        [EnvPrefix + "USER"] = user,
+        [EnvPrefix + "PASS"] = obscuredPassword,
+    };
 }
