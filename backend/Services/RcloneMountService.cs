@@ -202,6 +202,12 @@ public class RcloneMountService(ConfigManager configManager, RcloneMountStatus s
         try { Directory.CreateDirectory(CacheDir); }
         catch (Exception ex) { Log.Warning(ex, "Could not create rclone cache dir {Dir}", CacheDir); }
 
+        // Reclaim VFS cache namespaces orphaned by previous mounts before launching, so
+        // --vfs-cache-max-size bounds total usage and any historic leakage is recovered.
+        RcloneVfsCacheCleaner.PurgeStaleNamespaces(
+            CacheDir, RcloneMountCommandBuilder.RemoteName,
+            msg => Log.Information("{Message}", msg));
+
         string obscuredPass;
         try
         {
@@ -217,7 +223,6 @@ public class RcloneMountService(ConfigManager configManager, RcloneMountStatus s
         var options = new RcloneMountOptions
         {
             MountDir = mountDir,
-            WebdavUrl = WebdavUrl,
             Uid = uid,
             Gid = gid,
             VfsCacheMode = configManager.GetRcloneVfsCacheMode(),
@@ -240,9 +245,10 @@ public class RcloneMountService(ConfigManager configManager, RcloneMountStatus s
         foreach (var arg in RcloneMountCommandBuilder.Build(options))
             startInfo.ArgumentList.Add(arg);
 
-        // secrets via environment only — never in the argument list.
-        startInfo.Environment["RCLONE_WEBDAV_USER"] = user;
-        startInfo.Environment["RCLONE_WEBDAV_PASS"] = obscuredPass;
+        // Define the named WebDAV remote via env config (RCLONE_CONFIG_<NAME>_*).
+        // Secrets stay in the environment — never in the argument list.
+        foreach (var (key, value) in RcloneMountCommandBuilder.BuildRemoteEnvironment(WebdavUrl, user, obscuredPass))
+            startInfo.Environment[key] = value;
         // --cache-dir via env (RCLONE_<FLAG>); rclone's default $HOME/.cache/rclone
         // fails because the app user has no home directory.
         startInfo.Environment["RCLONE_CACHE_DIR"] = CacheDir;
